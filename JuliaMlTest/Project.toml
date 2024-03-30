@@ -1,0 +1,4 @@
+name = "JuliaMlTest"
+uuid = "73e97720-3dc3-4d5c-9541-53ddc1fb4e19"
+authors = ["Dmitrii Lavrov <d.lavrov@proscom.ru>"]
+version = "0.1.0"
