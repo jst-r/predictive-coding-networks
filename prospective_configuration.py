@@ -35,29 +35,20 @@ def prepare_activations(x, y):
 
 
 def global_energy(activations):
-    actIn, act0, actOut = activations
+    actIn, act1, actOut = activations
 
     def vec_square(x):
-        return t.einsum("bi,bi->b", x, x)
+        return (x**2).sum(dim=-1)
 
-    E0 = vec_square(act0 - l0(actIn)).mean()
-    E1 = vec_square(actOut - F.softmax(l1(F.relu(act0)), dim=-1)).mean()
+    E0 = vec_square(act1 - l0(actIn)).mean()
+    E1 = vec_square(actOut - F.sigmoid(l1(F.relu(act1)))).mean()
 
     return E0 + E1
 
 
-def relax_step(activations: list[nn.Parameter]):
-    for a in activations:
-        a.grad = None
-    E = global_energy(activations)
-    E.backward()
-    with t.no_grad():
-        activations[1] -= activations[1].grad
-
-
 # %%
-l0 = nn.Linear(2, 4, device=DEVICE)
-l1 = nn.Linear(4, 2, device=DEVICE)
+l0 = nn.Linear(2, 10, device=DEVICE)
+l1 = nn.Linear(10, 2, device=DEVICE)
 # %%
 loss_fn = nn.BCELoss()
 opt_weights = t.optim.AdamW([l0.weight, l0.bias, l1.weight, l1.bias], lr=0.01)
