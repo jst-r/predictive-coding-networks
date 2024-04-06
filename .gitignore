@@ -1,2 +1,10 @@
+# created by virtualenv automatically
+scripts
+Lib
+__pycache__
+
 data
 runs
+share
+
+pyvenv.cfg

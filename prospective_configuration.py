@@ -2,20 +2,13 @@
 import torch as t
 from torch import nn
 from torch.nn import functional as F
-from matplotlib import pyplot as plt
 from tqdm import tqdm
+
+from xor_data import plot_xor, X, labels
 
 # %%
 DEVICE = t.device("cpu")
 # %%
-X = t.rand(1000, 2, device=DEVICE) * 2 - 1
-xor_value = (X[:, 0] > 0) ^ (X[:, 1] > 0)
-labels = F.one_hot(xor_value.long(), 2).float()
-
-
-# %%
-def plot_xor(X, labels):
-    plt.scatter(X[:, 0].cpu(), X[:, 1].cpu(), c=labels[:, 0].cpu(), alpha=0.4)
 
 
 plot_xor(X, labels)
