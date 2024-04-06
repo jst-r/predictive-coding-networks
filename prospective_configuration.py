@@ -1,87 +1,93 @@
 # %%
 import torch as t
 from torch import nn
+from torch.utils.tensorboard import SummaryWriter
 from torch.nn import functional as F
-from tqdm import tqdm
-
-from xor_data import plot_xor, X, labels
-
-# %%
-DEVICE = t.device("cpu")
-# %%
-
-
-plot_xor(X, labels)
 
 
 # %%
-def forward(x):
-    return F.softmax(l1(F.relu(l0(x))), dim=-1)
+class PCLayer(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+        self.activation: t.Tensor | None = None
+        self.activation_caching = False
+
+    def forward(self, x):
+        if self.activation_caching:
+            self.activation = nn.Parameter(x)
+        return x
 
 
-def prepare_activations(x, y):
-    actIn = nn.Parameter(x)
-    act0 = nn.Parameter(l0(actIn))
-    actOut = y
+class PCModel(nn.Module):
+    def __init__(self, model: nn.Sequential, writer: SummaryWriter):
+        super().__init__()
+        self.inner = model
+        self.chunks, self.pc_layers = self._build_chunks()
+        self.step = 0
+        self.writer = writer
 
-    return [actIn, act0, actOut]
+    def forward(self, x: t.Tensor):
+        return self.inner(x)
+
+    def set_activation_caching(self, value: bool):
+        for module in self.pc_layers:
+            module.activation_caching = True
+
+    def populate_activations(self, x):
+        self.set_activation_caching(True)
+        x = self.forward(x)
+        self.set_activation_caching(False)
+        return x
+
+    def global_energy(
+        self, x: t.Tensor, loss_fn, labels: t.Tensor
+    ) -> tuple[t.Tensor, t.Tensor]:
+        energy = t.tensor(0.0, requires_grad=True)
+        for i, module in enumerate(self.inner.children()):
+            if isinstance(module, PCLayer):
+                error = module.activation - x
+                dE = error.pow(2).sum() * 0.5
+                self.writer.add_scalar(f"dE/{i}", dE.item(), self.step)
+                energy = energy + dE
+                x = module.activation
+            else:
+                x = module(x)
+
+        loss = loss_fn(x, labels)
+
+        self.writer.add_scalar("energy", energy.item(), self.step)
+        self.writer.add_scalar("loss", loss.item(), self.step)
+
+        return energy, loss
+    
+    def _global_energy(self, x: t.Tensor, loss_fn, labels: t.Tensor) -> t.Tensor:
+        energy = t.tensor(0.0, requires_grad=True)
+        acts = [x] + [l.activation for l in self.pc_layers] + [labels]
+        for i, [prev, curr, chunk] in enumerate(zip(acts[:-1], acts[1:], self.chunks)):
+            if i == len(self.chunks) - 1:
+                error = loss_fn(chunk(prev), curr)
+            else:
+                error = F.mse_loss(chunk(prev), curr)
+            energy = energy + error
+        
+        return energy
 
 
-def global_energy(activations):
-    actIn, act1, actOut = activations
+    def _build_chunks(self):
+        chunks = nn.ModuleList()
+        pc_layers = nn.ModuleList()
 
-    def vec_square(x):
-        return (x**2).sum(dim=-1)
+        curr_chunk = nn.Sequential()
+        for module in self.inner.children():
+            if isinstance(module, PCLayer):
+                chunks.append(curr_chunk)
+                curr_chunk = nn.Sequential()
+                pc_layers.append(module)
+            else:
+                curr_chunk.append(module)
 
-    E0 = vec_square(act1 - l0(actIn)).mean()
-    E1 = vec_square(actOut - F.sigmoid(l1(F.relu(act1)))).mean()
+        chunks.append(curr_chunk)
 
-    return E0 + E1
-
-
-# %%
-l0 = nn.Linear(2, 10, device=DEVICE)
-l1 = nn.Linear(10, 2, device=DEVICE)
-# %%
-loss_fn = nn.BCELoss()
-opt_weights = t.optim.AdamW([l0.weight, l0.bias, l1.weight, l1.bias], lr=0.01)
-# %%
-for e in tqdm(range(500)):
-    acts = prepare_activations(X, labels)
-    opt_energy = t.optim.AdamW(acts[1:-1], lr=0.05)
-
-    for i in range(16):
-        opt_weights.zero_grad()
-        opt_energy.zero_grad()
-        E = global_energy(acts)
-        E.backward()
-        opt_energy.step()
-        opt_weights.step()
-
-    if e % 100 == 0:
-        print(
-            f"epoch: {e}\n\tglobal energy: {E}\n\tloss: {loss_fn(forward(X), labels)}"
-        )
-
-print(f"END\n\tglobal energy: {E}\n\tloss: {loss_fn(forward(X), labels)}")
-
-# %%
-plot_xor(X, forward(X).detach())
-
-# %%
-acts = prepare_activations(X, labels)
-acts[-1] = F.softmax(l1(F.relu(acts[1])), dim=-1).detach()
-opt_energy = t.optim.SGD(acts[1:], lr=1)
-for _ in range(16):
-    opt_energy.zero_grad()
-    E = global_energy(acts)
-    E.backward()
-    opt_energy.step()
-    print(E)
-
-plot_xor(X, acts[-1].detach())
-# %%
-acts[-1]
-
-# %%
-l1.weight
+        return chunks, pc_layers
+            
