@@ -40,17 +40,18 @@ class PCModel(nn.Module):
         self.set_activation_caching(False)
         return x
     
-    def global_energy(self, x: t.Tensor, loss_fn, labels: t.Tensor) -> t.Tensor:
+    def global_energy(self, x: t.Tensor, loss_fn, labels: t.Tensor) -> tuple[t.Tensor, t.Tensor]:
         energy = t.tensor(0.0, requires_grad=True)
         acts = [x] + [l.activation for l in self.pc_layers] + [labels]
         for i, [prev, curr, chunk] in enumerate(zip(acts[:-1], acts[1:], self.chunks)):
             if i == len(self.chunks) - 1:
-                error = loss_fn(chunk(prev), curr)
+                loss = loss_fn(chunk(prev), curr)
+                error = loss
             else:
                 error = F.mse_loss(chunk(prev), curr)
             energy = energy + error
         
-        return energy
+        return energy, loss
 
 
     def _build_chunks(self):

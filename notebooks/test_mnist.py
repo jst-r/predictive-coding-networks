@@ -17,7 +17,7 @@ from src.utils import DEVICE, make_mnist_loaders
 train_loader, val_loader = make_mnist_loaders(32)
 
 # %%
-def make_model():
+def make_model(writer: SummaryWriter | None = None):
     return PCModel(
         nn.Sequential(
             nn.Flatten(-3, -1),
@@ -27,56 +27,67 @@ def make_model():
             nn.Linear(64, 64, bias=False),
             PCLayer(),
             nn.LeakyReLU(),
+            nn.Linear(64, 64, bias=False),
+            PCLayer(),
+            nn.LeakyReLU(),
             nn.Linear(64, 10, bias=False),
             nn.Softmax(),
         ),
-        SummaryWriter()
+        writer if writer else SummaryWriter()
     )
 
-
-model = make_model().to(DEVICE)
-
 RELAX_STEPS = 8
-WEIGHT_STEPS = 4
-WEIGHT_LR = 0.01
+WEIGHT_STEPS = 1
+WEIGHT_LR = 0.05
+
+def train_step(
+    model: PCModel,
+    x: t.Tensor,
+    y: t.Tensor,
+    loss_fn: nn.Module,
+    opt_weights: t.optim.Optimizer,
+    opt_energy: t.optim.Optimizer
+    ):
+    x, y = x.to(DEVICE), y.to(DEVICE)
+    model.populate_activations(x)
+    opt_energy = t.optim.SGD(model.pc_layers.parameters(), lr=1)
+    opt_weights.zero_grad()
+    for i in range(RELAX_STEPS):
+        opt_energy.zero_grad()
+        [E, loss] = model.global_energy(x, loss_fn, y)
+        if i == 0:
+            model.writer.add_scalar("loss/before_relaxation", loss.item(), model.step)
+            model.writer.add_scalar("energy_before_relaxation", E.item(), model.step)
+        if i == RELAX_STEPS - 1:
+            model.writer.add_scalar("loss/after_relaxation", loss.item(), model.step)
+            model.writer.add_scalar("energy_after_relaxation", E.item(), model.step)
+        (E + loss).backward()
+        opt_energy.step()
+
+    # for i in range(4):
+    #     # opt_weights.zero_grad()
+    #     E = model.global_energy(X, loss_fn, labels)
+    #     E.backward()
+    #     opt_weights.step()
+
+    for _ in range(WEIGHT_STEPS):
+        opt_weights.step()
+
+
+    return E
+
+# %%
+model = make_model().to(DEVICE)
 
 opt_weights = t.optim.AdamW(model.chunks.parameters(), lr=WEIGHT_LR / RELAX_STEPS / WEIGHT_STEPS)
 loss_fn = nn.CrossEntropyLoss()
 
-energies = []
-losses = []
 
-for epoch in tqdm(range(4)):
-    for x, y in train_loader:
-        x, y = x.to(DEVICE), y.to(DEVICE)
-        model.populate_activations(x)
-        opt_energy = t.optim.SGD(model.pc_layers.parameters(), lr=1)
-        opt_weights.zero_grad()
-        for i in range(RELAX_STEPS):
-            opt_energy.zero_grad()
-            E = model.global_energy(x, loss_fn, y)
-            E.backward()
-            opt_energy.step()
-
-        # for i in range(4):
-        #     # opt_weights.zero_grad()
-        #     E = model.global_energy(X, loss_fn, labels)
-        #     E.backward()
-        #     opt_weights.step()
-
-        for _ in range(WEIGHT_STEPS):
-            opt_weights.step()
-    
-        energies.append(E.item())
-        losses.append(loss_fn(model.forward(x), y).item())
-        print(f"loss {losses[-1]}\tE {energies[-1] - losses[-1]}")
+for epoch in tqdm(range(1)):
+    for i, [x, y] in enumerate(train_loader):
+        model.step = i
+        train_step(model, x, y, loss_fn, opt_weights, opt_weights)
 
 
-plt.show()
-plt.plot(energies)
-plt.plot(losses)
-plt.yscale("log")
-plt.show()
-print(f"energy: {E:.4}\tloss:{loss_fn(model.forward(x), y):.4}")
 
 # %%
