@@ -7,8 +7,8 @@ from tqdm import tqdm
 
 from torch.utils.tensorboard import SummaryWriter
 
-from prospective_configuration import PCLayer, PCModel
-from xor_data import make_xor_data, plot_xor
+from src.prospective_configuration import PCLayer, PCModel
+from src.utils import make_xor_data, plot_xor
 
 DEVICE = t.device("cpu")
 X, labels = make_xor_data(DEVICE)
@@ -19,12 +19,12 @@ def make_model():
         nn.Sequential(
             nn.Linear(2, 8, bias=False),
             PCLayer(),
-            # nn.ReLU(),
-            # nn.Linear(8, 8, bias=False),
-            # PCLayer(),
-            nn.ReLU(),
+            nn.LeakyReLU(),
+            nn.Linear(8, 8, bias=False),
+            PCLayer(),
+            nn.LeakyReLU(),
             nn.Linear(8, 2, bias=False),
-            nn.Sigmoid(),
+            nn.Softmax(),
         ),
         SummaryWriter()
     )
@@ -33,25 +33,47 @@ def make_model():
 model = make_model()
 model.populate_activations(X)
 
-opt_weights = t.optim.Adam(model.chunks.parameters(), lr=0.5)
-opt_energy = t.optim.SGD(model.pc_layers.parameters(), lr=0.5, momentum=0.9)
+opt_weights = t.optim.AdamW(model.chunks.parameters(), lr=0.05)
 loss_fn = nn.BCELoss()
 
-for epoch in range(500):
+energies = []
+losses = []
+
+for epoch in tqdm(range(300)):
+    model.populate_activations(X)
+    opt_energy = t.optim.SGD(model.pc_layers.parameters(), lr=1)
+    opt_weights.zero_grad()
     for i in range(4):
         opt_energy.zero_grad()
-        E = model._global_energy(X, loss_fn, labels)
+        E = model.global_energy(X, loss_fn, labels)
         E.backward()
         opt_energy.step()
 
-    for i in range(4):
-        opt_weights.zero_grad()
-        E = model._global_energy(X, loss_fn, labels)
-        E.backward()
-        opt_weights.step()
-    print(f"{epoch} energy: {E:.4}\tloss:{loss_fn(model.forward(X), labels):.4}")
+    # for i in range(4):
+    #     # opt_weights.zero_grad()
+    #     E = model.global_energy(X, loss_fn, labels)
+    #     E.backward()
+    #     opt_weights.step()
+    opt_weights.step()
+    
+    energies.append(E.item())
+    losses.append(loss_fn(model.forward(X), labels).item())
+
 
 plot_xor(X, model.forward(X).detach())
+plt.show()
+plt.plot(energies)
+plt.plot(losses)
+plt.yscale("log")
+plt.show()
+print(f"energy: {E:.4}\tloss:{loss_fn(model.forward(X), labels):.4}")
+
+# %%
+opt_energy.zero_grad()
+E = model.global_energy(X, loss_fn, labels)
+E.backward()
+model.pc_layers[0].activation.grad
+
 # %%
 plot_xor(X, labels)
 # %% It can be trained with plain Adam
