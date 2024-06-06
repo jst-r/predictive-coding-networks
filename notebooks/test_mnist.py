@@ -89,5 +89,19 @@ for epoch in tqdm(range(1)):
         train_step(model, x, y, loss_fn, opt_weights, opt_weights)
 
 
+# %%
 
+def evaluate(model: PCModel, test_loader: t.utils.data.DataLoader) -> float:
+    model.eval()
+    total_correct = 0
+    with t.no_grad():
+        for x, y in test_loader:
+            x, y = x.to(DEVICE), y.to(DEVICE)
+            logits = model(x)
+            _, predicted = t.max(logits, 1)
+            total_correct += (predicted == y).sum().item()
+    accuracy = total_correct / len(test_loader.dataset)
+    return accuracy
+
+evaluate(model, val_loader)
 # %%
